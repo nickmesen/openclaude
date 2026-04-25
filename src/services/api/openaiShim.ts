@@ -517,6 +517,20 @@ function convertMessages(
           (b: { type?: string }) => b.type !== 'tool_use' && b.type !== 'thinking',
         )
 
+        // Compute reasoning_content upfront so it is part of the object literal
+        // rather than a dynamic assignment. Some bundler/runtime paths may drop
+        // dynamically-added properties when the object flows through multiple
+        // transforms before JSON.stringify.
+        //
+        // DeepSeek requires reasoning_content on EVERY assistant message when
+        // thinking mode is active, even if the content is empty (e.g. the model
+        // produced no visible chain-of-thought for that turn).
+        const reasoningContent = preserveReasoningContent
+          ? ((thinkingBlock as { thinking?: string } | undefined)?.thinking ?? '')
+          : undefined
+        const hasThinkingBlock = thinkingBlock !== undefined
+        const shouldAttachReasoning = preserveReasoningContent
+
         const assistantMsg: OpenAIMessage = {
           role: 'assistant',
           content: (() => {
@@ -527,21 +541,9 @@ function convertMessages(
                 ? c.map((p: { text?: string }) => p.text ?? '').join('')
                 : ''
           })(),
-        }
-
-        // Providers that validate reasoning continuity (Moonshot/Kimi Code: "thinking
-        // is enabled but reasoning_content is missing in assistant tool call
-        // message at index N" 400) need the original chain-of-thought echoed
-        // back on each assistant message that carries a tool_call. We kept
-        // the thinking block on the Anthropic side; re-attach it here as the
-        // `reasoning_content` field on the outgoing OpenAI-shaped message.
-        // Gated per-provider because other endpoints either ignore the field
-        // (harmless) or strict-reject unknown fields (harmful).
-        if (preserveReasoningContent) {
-          const thinkingText = (thinkingBlock as { thinking?: string } | undefined)?.thinking
-          if (typeof thinkingText === 'string' && thinkingText.trim().length > 0) {
-            assistantMsg.reasoning_content = thinkingText
-          }
+          ...(shouldAttachReasoning && {
+            reasoning_content: reasoningContent,
+          }),
         }
 
         if (toolUses.length > 0) {
@@ -633,6 +635,9 @@ function convertMessages(
                 ? c.map((p: { text?: string }) => p.text ?? '').join('')
                 : ''
           })(),
+          ...(preserveReasoningContent && {
+            reasoning_content: '',
+          }),
         }
 
         if (assistantMsg.content) {
@@ -659,6 +664,9 @@ function convertMessages(
       coalesced.push({
         role: 'assistant',
         content: '[Tool execution interrupted by user]',
+        ...(preserveReasoningContent && {
+          reasoning_content: '',
+        }),
       })
     }
 

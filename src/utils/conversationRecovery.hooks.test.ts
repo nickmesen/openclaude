@@ -70,7 +70,7 @@ test('loadConversationForResume rejects oversized transcripts before resume hook
   expect(hookSpy).not.toHaveBeenCalled()
 })
 
-test('deserializeMessagesWithInterruptDetection strips thinking blocks only for OpenAI-compatible providers', async () => {
+test('deserializeMessagesWithInterruptDetection preserves thinking blocks for all providers (shim handles provider-specific filtering)', async () => {
   const serializedMessages = [
     user(id(10), 'hello'),
     {
@@ -120,13 +120,18 @@ test('deserializeMessagesWithInterruptDetection strips thinking blocks only for 
     message => message.type === 'assistant',
   )
 
+  // The first assistant message keeps its thinking block (the OpenAI shim will
+  // convert it to reasoning_content for DeepSeek/Moonshot as needed).
+  // The second assistant message is thinking-only and orphaned, so it is removed
+  // by filterOrphanedThinkingOnlyMessages — not by provider-specific stripping.
   expect(thirdPartyAssistantMessages).toHaveLength(2)
   expect(thirdPartyAssistantMessages[0]?.message?.content).toEqual([
+    { type: 'thinking', thinking: 'secret reasoning' },
     { type: 'text', text: 'visible reply' },
   ])
   expect(
     JSON.stringify(thirdPartyAssistantMessages.map(message => message.message?.content)),
-  ).not.toContain('secret reasoning')
+  ).toContain('secret reasoning')
   expect(
     JSON.stringify(thirdPartyAssistantMessages.map(message => message.message?.content)),
   ).not.toContain('only hidden reasoning')
